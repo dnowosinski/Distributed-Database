@@ -7,13 +7,10 @@ import java.util.Map;
 
 public class Main {
     public static void main(String[] args){
-        Map<String, String> secondNodeMap = new HashMap<String, String>();
-        secondNodeMap.put("2", "secondNodeData");
-        DatabaseNode secondNode = new DatabaseNode(2802, secondNodeMap);
 
-        Map<String, String> mainNodeMap = new HashMap<String, String>();
-        mainNodeMap.put("1", "mainNodeData");
-        DatabaseNode mainNode = new DatabaseNode(2801, mainNodeMap, new InetSocketAddress(secondNode.getTcpPort()));
+        DatabaseNode secondNode = new DatabaseNode(2802, "2", "secondNodeData");
+
+        DatabaseNode mainNode = new DatabaseNode(2801, "1", "mainNodeData", new InetSocketAddress(secondNode.getTcpPort()));
 
         mainNode.start();
         secondNode.start();

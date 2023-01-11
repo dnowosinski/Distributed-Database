@@ -4,29 +4,39 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.security.KeyPair;
 import java.sql.SQLOutput;
-import java.util.HashMap;
+import java.util.*;
 import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
-import java.util.HashSet;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 public class DatabaseNode {
     private int tcpPort;
-    private Map<String, String> data;
+    //private Map<String, String> data;
     private String key;
     private String value;
     private Set<InetSocketAddress> nodes = new HashSet<>();
 
     public int getTcpPort(){ return this.tcpPort; }
+    public String getValue(String key){ return key.equals(this.key)? this.value : null;}
+    private void setKeyValue(String key, String value){
+        this.key = key;
+        this.value = value;
+    }
+    private void setValue(String value){ this.value = value; }
 
-    public DatabaseNode(int tcpPort, Map<String, String> data, InetSocketAddress node) {
+    public DatabaseNode(int tcpPort, String key, String value, InetSocketAddress node) {
         this.tcpPort = tcpPort;
-        this.data = new HashMap<>(data);
+        //this.data = new HashMap<>(data);
+        this.key = key;
+        this.value = value;
         this.nodes.add(node);
     }
-    public DatabaseNode(int tcpPort, Map<String, String> data) {
+    public DatabaseNode(int tcpPort, String key, String value) {
         this.tcpPort = tcpPort;
-        this.data = new HashMap<>(data);
+        //this.data = new HashMap<>(data);
+        this.key = key;
+        this.value = value;
     }
 
     public void start(){
@@ -40,7 +50,7 @@ public class DatabaseNode {
 //        nodes.forEach(node -> new Thread().start());
     }
 
-    public void listenTcp(){
+    private void listenTcp(){
         try {
             ///
             System.out.println("Server listening on port: " + getTcpPort() + " ---- ");
@@ -55,8 +65,101 @@ public class DatabaseNode {
         }
     }
 
-    public void handleTcpRequest(Socket clientSocket){
+    private String opGetValue(Socket clientSocket, String key, String request) throws InterruptedException {
+        if (this.key == key){
+            return getValue(key);
+        }
+        else if (this.nodes.isEmpty()){
+            return "ERROR";
+        }
+        else{
+            Executor executor = Executors.newFixedThreadPool(nodes.size());
+            CountDownLatch latch = new CountDownLatch(nodes.size());
+            List<String> responses = new ArrayList<>();
+            for (InetSocketAddress node : nodes){
+                executor.execute(()->{
+                    try(Socket tcpClient = new Socket("localhost", node.getPort());
+                        BufferedReader clientInput = new BufferedReader(new InputStreamReader(tcpClient.getInputStream()));
+                        PrintWriter clientOutput = new PrintWriter(tcpClient.getOutputStream(), true)) {
 
+                        clientOutput.write(request);
+                        responses.add(clientInput.readLine());
+                    }
+                    catch(Exception e){
+                        e.printStackTrace();
+                    }
+                });
+            }
+            latch.await();
+            for (String response : responses){
+                if (response != "ERROR")
+                    return response;
+            }
+
+
+        }
+        return "ERROR";
+    }
+
+    private void handleTcpRequest(Socket clientSocket){
+        try(BufferedReader serverInput = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+            PrintWriter serverOutput = new PrintWriter(clientSocket.getOutputStream(), true)) {
+            String request = serverInput.readLine();
+            String operation = request.split(" ")[0];
+            String argument = request.split(" ")[1];
+
+            switch (operation){
+                case "get-value":{
+                    String[] arguments = argument.split(" ");
+                    if(arguments.length == 1){
+                        try {
+                            String value = opGetValue(clientSocket, arguments[0], request);
+                        }
+                        catch (Exception e){
+                            e.printStackTrace();
+                        }
+
+                    }
+                }
+                break;
+                case "set-value":{
+                    //opSetValue();
+                }
+                break;
+                case "find-key":{
+                    //opFindKey();
+                }
+                break;
+                case "get-max":{
+                    //opGetMax();
+                }
+                break;
+                case "get-min":{
+                    //opGetMin();
+                }
+                break;
+                case "new-record":{
+                    String[] arguments = argument.split(":");
+                    if(arguments.length == 2)
+                        this.setKeyValue(arguments[0], arguments[1]);
+                    //else
+                        //error -> do walidacji
+                }
+                break;
+                case "terminate":{
+                   //opTerminate();
+                }
+                break;
+                default:{
+                    //wrong request
+                }
+            }
+
+
+        }
+        catch (Exception e){
+            e.printStackTrace();
+        }
     }
 
 
