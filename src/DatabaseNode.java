@@ -16,6 +16,7 @@ public class DatabaseNode {
     private String key;
     private String value;
     private Set<InetSocketAddress> nodes = new HashSet<>();
+    private Map<String, Transaction> transactionMap = new HashMap<>();
 
     public int getTcpPort(){ return this.tcpPort; }
     public String getValue(String key){ return key.equals(this.key)? this.value : null;}
@@ -24,6 +25,10 @@ public class DatabaseNode {
         this.value = value;
     }
     private void setValue(String value){ this.value = value; }
+
+    private void createTransaction(int clientPort, int toReceive, boolean isNodeRequest){
+        this.transactionMap.put(Transaction.getNextId(), new Transaction(clientPort, toReceive, isNodeRequest));
+    }
 
     public DatabaseNode(int tcpPort, String key, String value, InetSocketAddress node) {
         this.tcpPort = tcpPort;
@@ -66,50 +71,65 @@ public class DatabaseNode {
     }
 
     private String opGetValue(Socket clientSocket, String key, String request) throws InterruptedException {
-        if (this.key == key){
+        if (this.key.equals(key)){
             return getValue(key);
         }
         else if (this.nodes.isEmpty()){
             return "ERROR";
         }
         else{
+            System.out.println("PORT: "+ getTcpPort() +" populating request to children::: " + nodes.size());
+            boolean isNodeRequest = Transaction.isNodeRequest(request);
+            createTransaction(clientSocket.getPort(), nodes.size(), isNodeRequest);  //reqnode
             Executor executor = Executors.newFixedThreadPool(nodes.size());
             CountDownLatch latch = new CountDownLatch(nodes.size());
-            List<String> responses = new ArrayList<>();
             for (InetSocketAddress node : nodes){
                 executor.execute(()->{
-                    try(Socket tcpClient = new Socket("localhost", node.getPort());
-                        BufferedReader clientInput = new BufferedReader(new InputStreamReader(tcpClient.getInputStream()));
-                        PrintWriter clientOutput = new PrintWriter(tcpClient.getOutputStream(), true)) {
-
-                        clientOutput.write(request);
-                        responses.add(clientInput.readLine());
-                    }
-                    catch(Exception e){
+                    try{
+                        String result = TCPClient.sendTCPMessage(node.getPort(), request);
+                        if (result == "Error") {
+                            throw new Exception("error");
+                        }
+                   }
+                   catch(Exception e){
                         e.printStackTrace();
-                    }
+                   }
+                   finally {
+                        latch.countDown();
+                   }
                 });
             }
             latch.await();
-            for (String response : responses){
-                if (response != "ERROR")
-                    return response;
-            }
-
-
         }
-        return "ERROR";
+        return "";
+    }
+
+    private void handleReply(){
+
     }
 
     private void handleTcpRequest(Socket clientSocket){
         try(BufferedReader serverInput = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
             PrintWriter serverOutput = new PrintWriter(clientSocket.getOutputStream(), true)) {
+
             String request = serverInput.readLine();
-            String operation = request.split(" ")[0];
-            String argument = request.split(" ")[1];
+            System.out.println("PORT: "+ getTcpPort() +" incoming request::: " + request);
+            String splittedRequest[] = request.split(" ");
+            int clientPort = clientSocket.getPort();
+            if (splittedRequest[splittedRequest.length - 2] == "node"){
+                clientPort = Integer.valueOf(splittedRequest[splittedRequest.length -1]);
+            }
+            String operation = splittedRequest[0];
+            String argument = splittedRequest[1];
 
             switch (operation){
+                case "reply":{
+                    String[] arguments = argument.split(" ");
+                    handleReply();
+                }
+                break;
                 case "get-value":{
+                    System.out.println("PORT: "+ getTcpPort() +" performing get-value for key::: " + argument);
                     String[] arguments = argument.split(" ");
                     if(arguments.length == 1){
                         try {
@@ -118,7 +138,9 @@ public class DatabaseNode {
                         catch (Exception e){
                             e.printStackTrace();
                         }
-
+                        if (value != ""){
+                            TCPClient.sendTCPMessage(clientPort, value);
+                        }
                     }
                 }
                 break;
