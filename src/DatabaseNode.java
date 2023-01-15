@@ -11,15 +11,16 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
 public class DatabaseNode {
-    private int tcpPort;
+    private int TCP_PORT;
+    final private String IP_ADDRESS = "localhost";
     //private Map<String, String> data;
     private String key;
     private String value;
     private Set<InetSocketAddress> nodes = new HashSet<>();
     private Map<String, Transaction> transactionMap = new HashMap<>();
 
-    public int getTcpPort(){ return this.tcpPort; }
-    public String getValue(String key){ return key.equals(this.key)? this.value : null;}
+    public int getTcpPort(){ return this.TCP_PORT; }
+    public String getValue(){ return this.value;}
     private void setKeyValue(String key, String value){
         this.key = key;
         this.value = value;
@@ -31,17 +32,50 @@ public class DatabaseNode {
     }
 
     public DatabaseNode(int tcpPort, String key, String value, InetSocketAddress node) {
-        this.tcpPort = tcpPort;
+        this.TCP_PORT = tcpPort;
         //this.data = new HashMap<>(data);
         this.key = key;
         this.value = value;
         this.nodes.add(node);
     }
     public DatabaseNode(int tcpPort, String key, String value) {
-        this.tcpPort = tcpPort;
+        this.TCP_PORT = tcpPort;
         //this.data = new HashMap<>(data);
         this.key = key;
         this.value = value;
+    }
+
+    public DatabaseNode(int tcpPort) {
+        this.TCP_PORT = tcpPort;
+    }
+
+    public DatabaseNode() {
+
+    }
+
+    public void main(String[] args){
+        DatabaseNode node = new DatabaseNode();
+        for (int i = 0; i < args.length; i++){
+            switch (args[i]){
+                case "-tcpport":{
+                    node = new DatabaseNode(Integer.valueOf(args[++i]));
+                }
+                break;
+                case "-record":{
+                    String[] arguments = args[++i].split(":");
+                    node.setKeyValue(arguments[0], arguments[1]);
+                    //validation??
+                }
+                break;
+                case "connect":{
+
+                }
+                break;
+                default:{
+
+                }
+            }
+        }
     }
 
     public void start(){
@@ -60,7 +94,7 @@ public class DatabaseNode {
             ///
             System.out.println("Server listening on port: " + getTcpPort() + " ---- ");
             ////
-            ServerSocket server = new ServerSocket(tcpPort);
+            ServerSocket server = new ServerSocket(TCP_PORT);
             while (true){
                 Socket clientSocket = server.accept();
                 new Thread(()-> handleTcpRequest(clientSocket)).start();
@@ -70,38 +104,32 @@ public class DatabaseNode {
         }
     }
 
-    private String opGetValue(Socket clientSocket, String key, String request) throws InterruptedException {
-        if (this.key.equals(key)){
-            return getValue(key);
+    private List<String> populateReqeust(String request) throws InterruptedException {
+        System.out.println("PORT: "+ getTcpPort() +" populating request to children::: " + nodes.size());
+        List<String> responses = new ArrayList<>(nodes.size());
+        Executor executor = Executors.newFixedThreadPool(nodes.size());
+        CountDownLatch latch = new CountDownLatch(nodes.size());
+        for (InetSocketAddress node : nodes){
+            executor.execute(()->{
+                try(Socket tcpClient = new Socket("localhost", node.getPort());
+                BufferedReader clientInput = new BufferedReader(new InputStreamReader(tcpClient.getInputStream()));
+                PrintWriter clientOutput = new PrintWriter(tcpClient.getOutputStream(), true)) {
+                    clientOutput.println(request);
+                    String response;
+                    while ((response = clientInput.readLine()) != null) {
+                        responses.add(response);
+                    }
+                }
+               catch(Exception e){
+                    e.printStackTrace();
+               }
+               finally {
+                    latch.countDown();
+               }
+            });
         }
-        else if (this.nodes.isEmpty()){
-            return "ERROR";
-        }
-        else{
-            System.out.println("PORT: "+ getTcpPort() +" populating request to children::: " + nodes.size());
-            boolean isNodeRequest = Transaction.isNodeRequest(request);
-            createTransaction(clientSocket.getPort(), nodes.size(), isNodeRequest);  //reqnode
-            Executor executor = Executors.newFixedThreadPool(nodes.size());
-            CountDownLatch latch = new CountDownLatch(nodes.size());
-            for (InetSocketAddress node : nodes){
-                executor.execute(()->{
-                    try{
-                        String result = TCPClient.sendTCPMessage(node.getPort(), request);
-                        if (result == "Error") {
-                            throw new Exception("error");
-                        }
-                   }
-                   catch(Exception e){
-                        e.printStackTrace();
-                   }
-                   finally {
-                        latch.countDown();
-                   }
-                });
-            }
-            latch.await();
-        }
-        return "";
+        latch.await();
+        return responses;
     }
 
     private void handleReply(){
@@ -114,62 +142,180 @@ public class DatabaseNode {
 
             String request = serverInput.readLine();
             System.out.println("PORT: "+ getTcpPort() +" incoming request::: " + request);
-            String splittedRequest[] = request.split(" ");
-            int clientPort = clientSocket.getPort();
-            if (splittedRequest[splittedRequest.length - 2] == "node"){
-                clientPort = Integer.valueOf(splittedRequest[splittedRequest.length -1]);
-            }
+            String[] splittedRequest = request.split(" ");
             String operation = splittedRequest[0];
-            String argument = splittedRequest[1];
-
+            String argument = "";
+            if(splittedRequest.length != 1){
+                argument = splittedRequest[1];
+            }
             switch (operation){
-                case "reply":{
-                    String[] arguments = argument.split(" ");
-                    handleReply();
-                }
-                break;
                 case "get-value":{
                     System.out.println("PORT: "+ getTcpPort() +" performing get-value for key::: " + argument);
-                    String[] arguments = argument.split(" ");
-                    if(arguments.length == 1){
-                        try {
-                            String value = opGetValue(clientSocket, arguments[0], request);
+                        String returnValue = "";
+                        if (this.key.equals(argument)){
+                            returnValue = getValue();
                         }
-                        catch (Exception e){
-                            e.printStackTrace();
+                        else if (this.nodes.isEmpty()){
+                            returnValue = "ERROR";
                         }
-                        if (value != ""){
-                            TCPClient.sendTCPMessage(clientPort, value);
+                        else{
+                            try {
+                                List<String> responses = populateReqeust(request);
+                                for (String response : responses){
+                                    if (response != "Error"){
+                                        returnValue = response;
+                                        break;
+                                    }
+                                }
+
+                            }
+                            catch (Exception e){
+                                e.printStackTrace();
+                            }
+                        }
+                        if (returnValue != ""){
+                            serverOutput.println(returnValue);
+                        }
+                }
+                break;
+                case "set-value":{
+                    String[] arguments = argument.split(":");
+                    System.out.println("PORT: "+ getTcpPort() +" performing set-value for key::: " + arguments[0]);
+                    if(arguments.length == 2){
+                        String returnValue = "";
+                        if (this.key.equals(arguments[0])){
+                            setValue(arguments[1]);
+                            returnValue = "OK";
+                        }
+                        else if (this.nodes.isEmpty()){
+                            returnValue = "ERROR";
+                        }
+                        else{
+                            try {
+                                List<String> responses = populateReqeust(request);
+                                for (String response : responses){
+                                    if (response != "Error"){
+                                        returnValue = response;
+                                        break;
+                                    }
+                                }
+
+                            }
+                            catch (Exception e){
+                                e.printStackTrace();
+                            }
+                        }
+                        if (returnValue != ""){
+                            serverOutput.println(returnValue);
                         }
                     }
                 }
                 break;
-                case "set-value":{
-                    //opSetValue();
-                }
-                break;
                 case "find-key":{
-                    //opFindKey();
+                    System.out.println("PORT: "+ getTcpPort() +" performing find-key for key::: " + argument);
+                    String returnValue = "";
+                    if (this.key.equals(argument)){
+                        returnValue = IP_ADDRESS + ":" + TCP_PORT;
+                    }
+                    else if (this.nodes.isEmpty()){
+                        returnValue = "ERROR";
+                    }
+                    else{
+                        try {
+                            List<String> responses = populateReqeust(request);
+                            for (String response : responses){
+                                if (response != "Error"){
+                                    returnValue = response;
+                                    break;
+                                }
+                            }
+
+                        }
+                        catch (Exception e){
+                            e.printStackTrace();
+                        }
+                    }
+                    if (returnValue != ""){
+                        serverOutput.println(returnValue);
+                    }
                 }
                 break;
                 case "get-max":{
-                    //opGetMax();
+                    System.out.println("PORT: "+ getTcpPort() +" performing get-max");
+                    String returnValue = "";
+                    System.out.println("PORT: "+ getTcpPort() + " this.nodes.isEmpty()::: " + this.nodes.isEmpty());
+                    if (this.nodes.isEmpty()){
+                        returnValue = getValue();
+                    }
+                    else {
+                        try {
+                            List<String> responses = populateReqeust(request);
+                            int max = Integer.valueOf(getValue());
+                            System.out.println(responses + " : " + max);
+                            for (String response : responses) {
+                                if (Integer.valueOf(response) > max) {
+                                    max = Integer.valueOf(response);
+                                }
+                            }
+                            returnValue = String.valueOf(max);
+
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    if (returnValue != "") {
+                        System.out.println("Returning::: " + returnValue);
+                        serverOutput.println(returnValue);
+                    }
                 }
                 break;
                 case "get-min":{
-                    //opGetMin();
+                    System.out.println("PORT: "+ getTcpPort() +" performing get-min");
+                    String returnValue = "";
+                    if (this.nodes.isEmpty()){
+                        returnValue = getValue();
+                    }
+                    else {
+                        try {
+                            List<String> responses = populateReqeust(request);
+                            int min = Integer.valueOf(getValue());
+                            for (String response : responses) {
+                                if (Integer.valueOf(response) < min) {
+                                    min = Integer.valueOf(response);
+                                }
+                            }
+                            returnValue = String.valueOf(min);
+
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    if (returnValue != "") {
+                        System.out.println("Returning::: " + returnValue);
+                        serverOutput.println(returnValue);
+                    }
                 }
                 break;
                 case "new-record":{
+                    String returnValue = "";
                     String[] arguments = argument.split(":");
-                    if(arguments.length == 2)
+                    if(arguments.length == 2){
                         this.setKeyValue(arguments[0], arguments[1]);
-                    //else
-                        //error -> do walidacji
+                        returnValue = "OK";
+                    }
+
+                    if (returnValue != "") {
+                        System.out.println("Returning::: " + returnValue);
+                        serverOutput.println(returnValue);
+                    }
                 }
                 break;
                 case "terminate":{
                    //opTerminate();
+                }
+                break;
+                case "connect":{
+                    //connect node
                 }
                 break;
                 default:{
