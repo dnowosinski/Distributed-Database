@@ -13,15 +13,15 @@ import java.util.concurrent.Executors;
 public class DatabaseNode {
     private int TCP_PORT;
     final private String IP_ADDRESS = "localhost";
-    //private Map<String, String> data;
     private String key;
     private String value;
     private Set<InetSocketAddress> nodes = new HashSet<>();
     private Map<String, Transaction> transactionMap = new HashMap<>();
+    private ServerSocket server;
 
     public int getTcpPort(){ return this.TCP_PORT; }
     public String getValue(){ return this.value;}
-    private void setKeyValue(String key, String value){
+    public void setKeyValue(String key, String value){
         this.key = key;
         this.value = value;
     }
@@ -47,13 +47,13 @@ public class DatabaseNode {
 
     public DatabaseNode(int tcpPort) {
         this.TCP_PORT = tcpPort;
+        start();
     }
 
     public DatabaseNode() {
-
     }
 
-    public void main(String[] args){
+    public static void main(String[] args){
         DatabaseNode node = new DatabaseNode();
         for (int i = 0; i < args.length; i++){
             switch (args[i]){
@@ -68,25 +68,32 @@ public class DatabaseNode {
                 }
                 break;
                 case "connect":{
+                    String[] arguments = args[++i].split(":");
+                    //node.nodes.add(new InetSocketAddress(arguments[0], Integer.valueOf(arguments[1])));   //adds parent to the nodes!
+                    final String nodeAdr = node.IP_ADDRESS;
+                    final int nodePort = node.getTcpPort();
+                    new Thread(()->{
+                        try(Socket tcpClient = new Socket(arguments[0], Integer.valueOf(arguments[1]));
+                            BufferedReader clientInput = new BufferedReader(new InputStreamReader(tcpClient.getInputStream()));
+                            PrintWriter clientOutput = new PrintWriter(tcpClient.getOutputStream(), true)) {
+                                clientOutput.println("connect " + nodeAdr + ":" + nodePort);
+                        }
+                        catch(Exception e){
+                            e.printStackTrace();
+                        }
+                    }).start();
 
                 }
                 break;
                 default:{
-
                 }
             }
         }
+        return;
     }
 
     public void start(){
         new Thread(()-> listenTcp()).start();
-
-        //connectToNodes();
-    }
-
-    public void connectToNodes(){
-//        Socket
-//        nodes.forEach(node -> new Thread().start());
     }
 
     private void listenTcp(){
@@ -94,7 +101,7 @@ public class DatabaseNode {
             ///
             System.out.println("Server listening on port: " + getTcpPort() + " ---- ");
             ////
-            ServerSocket server = new ServerSocket(TCP_PORT);
+            server = new ServerSocket(TCP_PORT);
             while (true){
                 Socket clientSocket = server.accept();
                 new Thread(()-> handleTcpRequest(clientSocket)).start();
@@ -311,11 +318,63 @@ public class DatabaseNode {
                 }
                 break;
                 case "terminate":{
-                   //opTerminate();
+                    String returnValue = "";
+                    String eraseRequest = "erase " + IP_ADDRESS + ":" + getTcpPort();
+                    if(this.nodes.isEmpty()){
+                        returnValue = "OK";
+                    }
+                    else{
+                        try{
+                            List<String> responses = populateReqeust(eraseRequest);
+                            for(String response : responses){
+                                System.out.println("terminated::: " + response);
+                                if (!response.equals("OK")){
+                                    returnValue = "ERROR";
+                                    break;
+                                }
+                                else {
+                                    returnValue = "OK";
+                                }
+                            }
+
+                        }
+                        catch (Exception e){
+                            e.printStackTrace();
+                        }
+                    }
+                    if (returnValue != "") {
+                        System.out.println("Returning::: " + returnValue);
+                        serverOutput.println(returnValue);
+                        server.close();
+                    }
+                }
+                break;
+                case "erase":{
+                    String returnValue = "";
+                    String[] arguments = argument.split(":");
+                    if(arguments.length == 2){
+                        for (InetSocketAddress node : nodes){
+                            System.out.println("toErase::: " + node.getAddress().toString());
+                            if(node.getAddress().toString().contains(arguments[0]) && node.getPort() == Integer.valueOf(arguments[1])){
+                                if (nodes.remove(node))
+                                    returnValue = "OK";
+                                else
+                                    returnValue = "Error";
+                            }
+                        }
+
+                        if (returnValue != "") {
+                            System.out.println("Returning::: " + returnValue);
+                            serverOutput.println(returnValue);
+                        }
+                    }
                 }
                 break;
                 case "connect":{
-                    //connect node
+                    String[] arguments = argument.split(":");
+                    if(arguments.length == 2){
+                        nodes.add(new InetSocketAddress(arguments[0], Integer.valueOf(arguments[1])));
+                    }
                 }
                 break;
                 default:{
@@ -329,126 +388,4 @@ public class DatabaseNode {
             e.printStackTrace();
         }
     }
-
-
 }
-
-
-
-
-
-///import java.io.*;
-//import java.net.*;
-//import java.util.*;
-//
-//public class DatabaseNode {
-//  private int tcpPort;
-//  private Map<Integer, Integer> data;
-//  private Set<InetSocketAddress> nodes;
-//
-//  public DatabaseNode(int tcpPort, Map<Integer, Integer> data, Set<InetSocketAddress> nodes) {
-//    this.tcpPort = tcpPort;
-//    this.data = data;
-//    this.nodes = nodes;
-//  }
-//
-//  public void start() {
-//    // uruchomienie nasłuchiwania na porcie TCP
-//    new Thread(() -> listenTcp()).start();
-//
-//    // podłączenie się do węzłów w sieci
-//    for (InetSocketAddress addr : nodes) {
-//      connectToNode(addr);
-//    }
-//  }
-//
-//  private void listenTcp() {
-//    try (ServerSocket serverSocket = new ServerSocket(tcpPort)) {
-//      while (true) {
-//        // oczekiwanie na połączenie od klienta
-//        Socket socket = serverSocket.accept();
-//        // obsługa połączenia w osobnym wątku
-//        new Thread(() -> handleTcpRequest(socket)).start();
-//      }
-//    } catch (IOException e) {
-//      // obsługa wyjątku
-//    }
-//  }
-//
-//  private void handleTcpRequest(Socket socket) {
-//    try (BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-//         PrintWriter out = new PrintWriter(socket.getOutputStream(), true)) {
-//      String request = in.readLine();
-//      String[] parts = request.split(":");
-//      String command = parts[0];
-//      int key = Integer.parseInt(parts[1]);
-//      switch (command) {
-//        case "GET":
-//          int value = data.getOrDefault(key, -1);
-//          out.println(value);
-//          break;
-//        case "PUT":
-//          int newValue = Integer.parseInt(parts[2]);
-//          data.put(key, newValue);
-//          out.println("OK");
-//          break;
-//        case "DELETE":
-//          data.remove(key);
-//          out.println("OK");
-//          break;
-//      }
-//    } catch (IOException e) {
-//      // obsługa wyjątku
-//    }
-//  }
-//
-//  private void connectToNode(InetSocketAddress addr) {
-//    try (Socket socket = new Socket()) {
-//      socket.connect(addr);
-//      // utworzenie nowego wątku do obsługi połączenia z węzłem
-//      new Thread(() -> handleNodeConnection(socket)).start();
-//    } catch (IOException e) {
-//      // obsługa wyjątku
-//    }
-//  }
-//
-//  private void handleNodeConnection(Socket socket
-
-
-
-
-
-
-//try(BufferedReader fromClient = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-//            PrintWriter toClient = new PrintWriter(clientSocket.getOutputStream(), true)) {
-//            String incomingData = fromClient.readLine();
-//            if (!incomingData.isEmpty())
-//                System.out.println("incoming request on port::: " + tcpPort + ", data::: "  + incomingData);
-//
-//            if (!incomingData.isEmpty() && data.get(incomingData) == null){
-//                for (InetSocketAddress nodeToConnect : nodes){
-//                    new Thread(()->{
-//                        try(Socket socket = new Socket("localhost", nodeToConnect.getPort());
-//                            BufferedReader serverInput = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-//                            PrintWriter serverOutput = new PrintWriter(socket.getOutputStream(), true)){
-//                            String toSend = incomingData;
-//                            serverOutput.write(toSend);
-//                            System.out.println("request sent to::: " + nodeToConnect.getPort());
-////                            String response = serverInput.readLine();
-////                            System.out.println("response from port " + nodeToConnect.getPort() + "::: " + response);
-//                        }
-//                        catch (Exception e){
-//                            e.printStackTrace();
-//                        }
-//                    }).start();
-//                }
-//            }
-//            else{
-//                if (!incomingData.isEmpty())
-//                    System.out.println("Data found on port: " + tcpPort + "::: " + data.get(incomingData));
-//            }
-//
-//
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//        }
