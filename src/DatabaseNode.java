@@ -67,16 +67,18 @@ public class DatabaseNode {
                     //validation??
                 }
                 break;
-                case "connect":{
+                case "-connect":{
                     String[] arguments = args[++i].split(":");
                     //node.nodes.add(new InetSocketAddress(arguments[0], Integer.valueOf(arguments[1])));   //adds parent to the nodes!
                     final String nodeAdr = node.IP_ADDRESS;
                     final int nodePort = node.getTcpPort();
+                    System.out.println("before");
                     new Thread(()->{
                         try(Socket tcpClient = new Socket(arguments[0], Integer.valueOf(arguments[1]));
                             BufferedReader clientInput = new BufferedReader(new InputStreamReader(tcpClient.getInputStream()));
                             PrintWriter clientOutput = new PrintWriter(tcpClient.getOutputStream(), true)) {
                                 clientOutput.println("connect " + nodeAdr + ":" + nodePort);
+                            System.out.println("after");
                         }
                         catch(Exception e){
                             e.printStackTrace();
@@ -372,6 +374,7 @@ public class DatabaseNode {
                 break;
                 case "connect":{
                     String[] arguments = argument.split(":");
+                    System.out.println("CONNECT TO " + getTcpPort() + " port::: " + arguments[1]);
                     if(arguments.length == 2){
                         nodes.add(new InetSocketAddress(arguments[0], Integer.valueOf(arguments[1])));
                     }
