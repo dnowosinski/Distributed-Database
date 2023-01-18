@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 public class DatabaseNode {
     private int TCP_PORT;
@@ -18,6 +19,8 @@ public class DatabaseNode {
     private Set<InetSocketAddress> nodes = new HashSet<>();
     private Map<String, Transaction> transactionMap = new HashMap<>();
     private ServerSocket server;
+    private List<String> transactionIds = new ArrayList<>();
+    static private int idCounter = 0;
 
     public int getTcpPort(){ return this.TCP_PORT; }
     public String getValue(){ return this.value;}
@@ -27,20 +30,32 @@ public class DatabaseNode {
     }
     private void setValue(String value){ this.value = value; }
 
-    private void createTransaction(int clientPort, int toReceive, boolean isNodeRequest){
-        this.transactionMap.put(Transaction.getNextId(), new Transaction(clientPort, toReceive, isNodeRequest));
+//    private void createTransaction(int clientPort, int toReceive, boolean isNodeRequest){
+//        this.transactionMap.put(Transaction.getNextId(), new Transaction(clientPort, toReceive, isNodeRequest));
+//    }
+
+    private String createTransaction(){
+        String newId = getTcpPort()+":"+String.valueOf(++idCounter);
+        this.transactionIds.add(newId);
+        return String.valueOf(newId);
+    }
+
+    private void addToTransactions(String id){
+        this.transactionIds.add(id);
+    }
+
+    private boolean holdsTransaction(String id){
+        return this.transactionIds.contains(id)? true : false;
     }
 
     public DatabaseNode(int tcpPort, String key, String value, InetSocketAddress node) {
         this.TCP_PORT = tcpPort;
-        //this.data = new HashMap<>(data);
         this.key = key;
         this.value = value;
         this.nodes.add(node);
     }
     public DatabaseNode(int tcpPort, String key, String value) {
         this.TCP_PORT = tcpPort;
-        //this.data = new HashMap<>(data);
         this.key = key;
         this.value = value;
     }
@@ -58,7 +73,7 @@ public class DatabaseNode {
         for (int i = 0; i < args.length; i++){
             switch (args[i]){
                 case "-tcpport":{
-                    node = new DatabaseNode(Integer.valueOf(args[++i]));
+                    node = new DatabaseNode(Integer.valueOf(args[++i]));  //222
                 }
                 break;
                 case "-record":{
@@ -67,18 +82,16 @@ public class DatabaseNode {
                     //validation??
                 }
                 break;
-                case "-connect":{
-                    String[] arguments = args[++i].split(":");
-                    //node.nodes.add(new InetSocketAddress(arguments[0], Integer.valueOf(arguments[1])));   //adds parent to the nodes!
+                case "-connect":{  //
+                    String[] arguments = args[++i].split(":"); //  -connect 3131:111
+                    node.nodes.add(new InetSocketAddress(arguments[0], Integer.valueOf(arguments[1])));   //adds parent to the nodes!
                     final String nodeAdr = node.IP_ADDRESS;
                     final int nodePort = node.getTcpPort();
-                    System.out.println("before");
                     new Thread(()->{
                         try(Socket tcpClient = new Socket(arguments[0], Integer.valueOf(arguments[1]));
                             BufferedReader clientInput = new BufferedReader(new InputStreamReader(tcpClient.getInputStream()));
                             PrintWriter clientOutput = new PrintWriter(tcpClient.getOutputStream(), true)) {
                                 clientOutput.println("connect " + nodeAdr + ":" + nodePort);
-                            System.out.println("after");
                         }
                         catch(Exception e){
                             e.printStackTrace();
@@ -108,9 +121,7 @@ public class DatabaseNode {
                 Socket clientSocket = server.accept();
                 new Thread(()-> handleTcpRequest(clientSocket)).start();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        } catch (IOException e) {}
     }
 
     private List<String> populateReqeust(String request) throws InterruptedException {
@@ -141,48 +152,64 @@ public class DatabaseNode {
         return responses;
     }
 
-    private void handleReply(){
-
-    }
-
     private void handleTcpRequest(Socket clientSocket){
         try(BufferedReader serverInput = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
             PrintWriter serverOutput = new PrintWriter(clientSocket.getOutputStream(), true)) {
 
             String request = serverInput.readLine();
-            System.out.println("PORT: "+ getTcpPort() +" incoming request::: " + request);
-            String[] splittedRequest = request.split(" ");
+            //System.out.println("PORT: "+ getTcpPort() +" incoming request::: " + request);
+            String[] splittedRequest = request.split(" ");  //[conn][lh:2]
+            if (splittedRequest.length > 1 && splittedRequest[splittedRequest.length - 2].equals("id")){
+                if (holdsTransaction(splittedRequest[splittedRequest.length - 1])){
+                    serverOutput.println("ERROR");
+                    return;
+                }
+                else {
+                    addToTransactions(splittedRequest[splittedRequest.length - 1]);
+                }
+                splittedRequest = Arrays.copyOfRange(splittedRequest, 0 , splittedRequest.length - 2);
+            }
+            else {
+                System.out.println("PORT: "+ getTcpPort() +" incoming request::: " + request);
+                String transactionId = createTransaction();
+                request += " id " + transactionId;
+            }
             String operation = splittedRequest[0];
             String argument = "";
             if(splittedRequest.length != 1){
                 argument = splittedRequest[1];
             }
+
             switch (operation){
                 case "get-value":{
                     System.out.println("PORT: "+ getTcpPort() +" performing get-value for key::: " + argument);
                         String returnValue = "";
                         if (this.key.equals(argument)){
-                            returnValue = getValue();
+                            returnValue = this.key + ":" + getValue();
                         }
-                        else if (this.nodes.isEmpty()){
+                        else if (this.nodes.size() <= 1){
                             returnValue = "ERROR";
                         }
                         else{
+
                             try {
                                 List<String> responses = populateReqeust(request);
+                                System.out.println("response get-value::: " + responses);
+                                returnValue = "ERROR";
                                 for (String response : responses){
-                                    if (response != "Error"){
+                                    if (!response.equals("ERROR")){
                                         returnValue = response;
                                         break;
                                     }
                                 }
-
                             }
                             catch (Exception e){
                                 e.printStackTrace();
                             }
                         }
-                        if (returnValue != ""){
+                        System.out.println("returning get-value::: " + returnValue);
+                        if (!returnValue.equals("")){
+                            System.out.println("Returning::: " + returnValue);
                             serverOutput.println(returnValue);
                         }
                 }
@@ -196,14 +223,14 @@ public class DatabaseNode {
                             setValue(arguments[1]);
                             returnValue = "OK";
                         }
-                        else if (this.nodes.isEmpty()){
+                        else if (this.nodes.size() <= 1){
                             returnValue = "ERROR";
                         }
                         else{
                             try {
                                 List<String> responses = populateReqeust(request);
                                 for (String response : responses){
-                                    if (response != "Error"){
+                                    if (!response.equals("ERROR")){
                                         returnValue = response;
                                         break;
                                     }
@@ -214,7 +241,8 @@ public class DatabaseNode {
                                 e.printStackTrace();
                             }
                         }
-                        if (returnValue != ""){
+                        if (!returnValue.equals("")){
+                            System.out.println("Returning::: " + returnValue);
                             serverOutput.println(returnValue);
                         }
                     }
@@ -223,28 +251,30 @@ public class DatabaseNode {
                 case "find-key":{
                     System.out.println("PORT: "+ getTcpPort() +" performing find-key for key::: " + argument);
                     String returnValue = "";
+
                     if (this.key.equals(argument)){
                         returnValue = IP_ADDRESS + ":" + TCP_PORT;
                     }
-                    else if (this.nodes.isEmpty()){
+                    else if (this.nodes.size() <= 1){
                         returnValue = "ERROR";
                     }
                     else{
                         try {
                             List<String> responses = populateReqeust(request);
+                            returnValue = "ERROR";
                             for (String response : responses){
-                                if (response != "Error"){
+                                if (!response.equals("ERROR")){
                                     returnValue = response;
                                     break;
                                 }
                             }
-
                         }
                         catch (Exception e){
                             e.printStackTrace();
                         }
                     }
-                    if (returnValue != ""){
+                    if (!returnValue.equals("")){
+                        System.out.println("Returning::: " + returnValue);
                         serverOutput.println(returnValue);
                     }
                 }
@@ -252,27 +282,35 @@ public class DatabaseNode {
                 case "get-max":{
                     System.out.println("PORT: "+ getTcpPort() +" performing get-max");
                     String returnValue = "";
-                    System.out.println("PORT: "+ getTcpPort() + " this.nodes.isEmpty()::: " + this.nodes.isEmpty());
-                    if (this.nodes.isEmpty()){
-                        returnValue = getValue();
+                    if (this.nodes.size() <= 1){
+                        returnValue = this.key + ":" + getValue();;
                     }
                     else {
                         try {
                             List<String> responses = populateReqeust(request);
+                            Map<String, String> responsesKeyVal = responses.stream()
+                                    .filter(s -> !s.equals("ERROR"))
+                                    .map(s -> s.split(":"))
+                                    .collect(Collectors.toMap(e -> e[1], e -> e[0], (oldValue, newValue) -> newValue));
+                            responses = responsesKeyVal.keySet().stream().toList();
                             int max = Integer.valueOf(getValue());
+                            responsesKeyVal.put(getValue(), this.key);
                             System.out.println(responses + " : " + max);
                             for (String response : responses) {
+                                if (response.equals("ERROR")){
+                                    continue;
+                                }
                                 if (Integer.valueOf(response) > max) {
                                     max = Integer.valueOf(response);
                                 }
                             }
-                            returnValue = String.valueOf(max);
+                            returnValue = responsesKeyVal.get(String.valueOf(max)) + ":" + max;
 
                         } catch (Exception e) {
                             e.printStackTrace();
                         }
                     }
-                    if (returnValue != "") {
+                    if (!returnValue.equals("")) {
                         System.out.println("Returning::: " + returnValue);
                         serverOutput.println(returnValue);
                     }
@@ -281,25 +319,35 @@ public class DatabaseNode {
                 case "get-min":{
                     System.out.println("PORT: "+ getTcpPort() +" performing get-min");
                     String returnValue = "";
-                    if (this.nodes.isEmpty()){
-                        returnValue = getValue();
+                    if (this.nodes.size() <= 1){
+                        returnValue = this.key + ":" + getValue();
                     }
                     else {
                         try {
                             List<String> responses = populateReqeust(request);
+                            Map<String, String> responsesKeyVal = responses.stream()
+                                    .filter(s -> !s.equals("ERROR"))
+                                    .map(s -> s.split(":"))
+                                    .collect(Collectors.toMap(e -> e[1], e -> e[0], (oldValue, newValue) -> newValue));
+                            responses = responsesKeyVal.keySet().stream().toList();
                             int min = Integer.valueOf(getValue());
+                            responsesKeyVal.put(getValue(), this.key);
                             for (String response : responses) {
+                                if (response.equals("ERROR")){
+                                    continue;
+                                }
+
                                 if (Integer.valueOf(response) < min) {
                                     min = Integer.valueOf(response);
                                 }
                             }
-                            returnValue = String.valueOf(min);
+                            returnValue = responsesKeyVal.get(String.valueOf(min)) + ":" + min;
 
                         } catch (Exception e) {
                             e.printStackTrace();
                         }
                     }
-                    if (returnValue != "") {
+                    if (!returnValue.equals("")) {
                         System.out.println("Returning::: " + returnValue);
                         serverOutput.println(returnValue);
                     }
@@ -313,7 +361,7 @@ public class DatabaseNode {
                         returnValue = "OK";
                     }
 
-                    if (returnValue != "") {
+                    if (!returnValue.equals("")) {
                         System.out.println("Returning::: " + returnValue);
                         serverOutput.println(returnValue);
                     }
@@ -344,9 +392,10 @@ public class DatabaseNode {
                             e.printStackTrace();
                         }
                     }
-                    if (returnValue != "") {
+                    if (!returnValue.equals("")) {
                         System.out.println("Returning::: " + returnValue);
                         serverOutput.println(returnValue);
+                        System.out.println("Listening on PORT: " + getTcpPort() + " closed");
                         server.close();
                     }
                 }
@@ -355,17 +404,20 @@ public class DatabaseNode {
                     String returnValue = "";
                     String[] arguments = argument.split(":");
                     if(arguments.length == 2){
+                        List<InetSocketAddress> toErase = new ArrayList<>();
                         for (InetSocketAddress node : nodes){
-                            System.out.println("toErase::: " + node.getAddress().toString());
                             if(node.getAddress().toString().contains(arguments[0]) && node.getPort() == Integer.valueOf(arguments[1])){
-                                if (nodes.remove(node))
-                                    returnValue = "OK";
+                                if (nodes.contains(node)){
+                                    toErase.add(node);
+                                }
                                 else
-                                    returnValue = "Error";
+                                    returnValue = "ERROR";
                             }
                         }
-
-                        if (returnValue != "") {
+                        if(nodes.removeAll(toErase)){
+                            returnValue = "OK";
+                        }
+                        if (!returnValue.equals("")) {
                             System.out.println("Returning::: " + returnValue);
                             serverOutput.println(returnValue);
                         }
